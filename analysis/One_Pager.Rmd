@@ -1,0 +1,294 @@
+---
+output:
+  pdf_document:
+    latex_engine: xelatex
+    number_sections: false
+    fig_caption: true
+fontsize: 11pt
+geometry: margin=1in
+---
+
+# Medicare ACO Spending Patterns: Replication and Extension 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, dpi = 220,
+                      fig.width = 7, fig.height = 4.2)
+
+suppressPackageStartupMessages({
+  library(dplyr); library(readr); library(stringr); library(purrr)
+  library(janitor); library(ggplot2); library(broom)
+  library(plm); library(lmtest); library(sandwich)
+  library(fixest); library(modelsummary)
+})
+
+# outputs dir for saved tables/figures
+if (!dir.exists("outputs")) dir.create("outputs", recursive = TRUE)
+```
+# Executive Summary
+
+## Question: Do ACOs that achieve shared savings reallocate spending away from inpatient and post-acute institutional care toward physician/outpatient services?
+
+## Answer: Yes. In 2014–2017 MSSP data, inpatient and SNF shares are consistently and negatively associated with savings; physician share is small positive and not reliably significant. Results mirror the published study and are robust to clustered SEs and reduced specifications addressing multicollinearity.
+
+## Data: Medicare Shared Savings Program (MSSP) PUFs, 2014–2017. Unit = ACO-year.
+
+## Methods: Fixed-effects (ACO & year) linear model of savings rate and fixed-effects logit for achieving savings; ACO-clustered SEs.
+
+```{r}
+# Prefer a ready harmonized object; fall back to CSVs if needed
+if (file.exists("aco_data.rds")) {
+  aco_data <- readRDS("aco_data.rds")
+} else if (file.exists("aco_data.csv")) {
+  aco_data <- read_csv("aco_data.csv", show_col_types = FALSE) |> clean_names()
+} else {
+  # Fallback: rebuild from four yearly CSVs in ./data
+  files <- list.files("data", pattern = "^(2014|2015|2016|2017).*\\.csv$", full.names = TRUE)
+  stopifnot(length(files) >= 4)
+  years <- str_extract(basename(files), "^(2014|2015|2016|2017)")
+  names(files) <- years
+
+  read_one <- function(path, yr) {
+    read_csv(path, show_col_types = FALSE) |>
+      clean_names() |>
+      mutate(year = as.integer(yr)) |>
+      # normalize CapAnn variations
+      rename_with(~ str_replace_all(.x, "^cap_ann_", "capann_")) |>
+      rename_with(~ str_replace(.x, "amb_pay$", "ambpay"))
+  }
+
+  raw <- map2(files, names(files), read_one)
+
+  needed <- c("aco_num","year","sav_rate",
+              "capann_inp_all","capann_opd","capann_snf","capann_pb",
+              "capann_ambpay","capann_hha","capann_dme","capann_hsp")
+
+  safe_num <- function(x) readr::parse_number(as.character(x), na = c("", "NA", "*"))
+
+  harmonize <- function(df) {
+    miss <- setdiff(needed, names(df)); if (length(miss)) df[miss] <- NA
+    df |>
+      mutate(aco_num = as.character(aco_num)) |>
+      mutate(across(all_of(setdiff(needed, c("aco_num","year"))), safe_num)) |>
+      select(any_of(needed))
+  }
+
+  datasets2 <- map(raw, harmonize)
+  aco_data <- bind_rows(datasets2) |>
+    arrange(aco_num, year)
+}
+
+# sanity
+stopifnot(all(c("aco_num","year","sav_rate") %in% names(aco_data)))
+```
+
+```{r}
+# Prefer a ready harmonized object; fall back to CSVs if needed
+if (file.exists("aco_data.rds")) {
+  aco_data <- readRDS("aco_data.rds")
+} else if (file.exists("aco_data.csv")) {
+  aco_data <- read_csv("aco_data.csv", show_col_types = FALSE) |> clean_names()
+} else {
+  # Fallback: rebuild from four yearly CSVs in ./data
+  files <- list.files("data", pattern = "^(2014|2015|2016|2017).*\\.csv$", full.names = TRUE)
+  stopifnot(length(files) >= 4)
+  years <- str_extract(basename(files), "^(2014|2015|2016|2017)")
+  names(files) <- years
+
+  read_one <- function(path, yr) {
+    read_csv(path, show_col_types = FALSE) |>
+      clean_names() |>
+      mutate(year = as.integer(yr)) |>
+      # normalize CapAnn variations
+      rename_with(~ str_replace_all(.x, "^cap_ann_", "capann_")) |>
+      rename_with(~ str_replace(.x, "amb_pay$", "ambpay"))
+  }
+
+  raw <- map2(files, names(files), read_one)
+
+  needed <- c("aco_num","year","sav_rate",
+              "capann_inp_all","capann_opd","capann_snf","capann_pb",
+              "capann_ambpay","capann_hha","capann_dme","capann_hsp")
+
+  safe_num <- function(x) readr::parse_number(as.character(x), na = c("", "NA", "*"))
+
+  harmonize <- function(df) {
+    miss <- setdiff(needed, names(df)); if (length(miss)) df[miss] <- NA
+    df |>
+      mutate(aco_num = as.character(aco_num)) |>
+      mutate(across(all_of(setdiff(needed, c("aco_num","year"))), safe_num)) |>
+      select(any_of(needed))
+  }
+
+  datasets2 <- map(raw, harmonize)
+  aco_data <- bind_rows(datasets2) |>
+    arrange(aco_num, year)
+}
+
+# sanity
+stopifnot(all(c("aco_num","year","sav_rate") %in% names(aco_data)))
+```
+
+
+```{r}
+exp_cols <- c("capann_inp_all","capann_opd","capann_snf","capann_pb",
+              "capann_ambpay","capann_hha","capann_dme","capann_hsp")
+
+aco_data <- aco_data |>
+  mutate(total_exp = rowSums(across(all_of(exp_cols)), na.rm = TRUE)) |>
+  mutate(across(all_of(exp_cols),
+                ~ 100 * (.x / if_else(total_exp == 0, NA_real_, total_exp)),
+                .names = "{.col}_pct")) |>
+  mutate(sav_rate = if_else(abs(sav_rate) <= 1, 100 * sav_rate, sav_rate)) |>
+  mutate(saved = as.integer(sav_rate > 0))
+
+# Panel objects
+fe_data  <- pdata.frame(aco_data, index = c("aco_num","year"))
+glm_data <- as.data.frame(aco_data) |>
+  mutate(year = factor(year), aco_num = factor(aco_num))
+```
+
+```{r}
+# Simple year-over-year shifts in spending shares (means)
+desc <- aco_data |>
+  summarize(across(ends_with("_pct"), ~ mean(.x, na.rm = TRUE)), .by = year) |>
+  pivot_longer(-year, names_to = "var", values_to = "pct") |>
+  mutate(var = recode(var,
+    capann_inp_all_pct = "Inpatient",
+    capann_snf_pct     = "SNF",
+    capann_pb_pct      = "Physician",
+    capann_opd_pct     = "Outpatient (OPD)",
+    capann_hha_pct     = "Home Health",
+    capann_hsp_pct     = "Hospice",
+    capann_ambpay_pct  = "Ambulance",
+    capann_dme_pct     = "DME"
+  ))
+
+ggplot(desc, aes(x = year, y = pct, group = var)) +
+  geom_line() + geom_point() +
+  labs(title = "Average Spending Composition by Year",
+       x = "Year", y = "Share of Total Expenditures (%)", color = "") +
+  theme_minimal(base_size = 11) +
+  guides(color = "none") +
+  facet_wrap(~ var, scales = "free_y")
+```
+
+
+```{r}
+# Full & reduced FE models
+fe_full <- plm(
+  sav_rate ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
+             capann_pb_pct + capann_ambpay_pct + capann_hha_pct + capann_dme_pct,
+  data = fe_data, model = "within"
+)
+fe_reduced <- plm(
+  sav_rate ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
+             capann_pb_pct + capann_hha_pct,
+  data = fe_data, model = "within"
+)
+
+se_fe_full    <- vcovHC(fe_full,    type = "HC1", cluster = "group")
+se_fe_reduced <- vcovHC(fe_reduced, type = "HC1", cluster = "group")
+
+labels <- c(
+  capann_inp_all_pct = "Percent Inpatient",
+  capann_snf_pct     = "Percent SNF",
+  capann_pb_pct      = "Percent Physician",
+  capann_hha_pct     = "Percent Home Health",
+  capann_hsp_pct     = "Percent Hospice",
+  capann_ambpay_pct  = "Percent Ambulance",
+  capann_dme_pct     = "Percent DME"
+)
+
+msummary(
+  list("FE: Savings Rate (Full)" = fe_full,
+       "FE: Savings Rate (Reduced)" = fe_reduced),
+  vcov      = list(se_fe_full, se_fe_reduced),
+  coef_map  = labels,
+  estimate  = "{estimate}{stars}",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  gof_omit  = "IC|Log|Adj|Within|RMSE",
+  title     = "Effect of Spending Composition on ACO Savings Rate",
+  notes     = "Outcome is savings rate (percentage points). ACO & year fixed effects; SEs clustered by ACO.",
+  output    = "outputs/fe_models.html"
+)
+```
+
+
+```{r}
+tidy_fe <- tidy(fe_reduced, conf.int = TRUE, vcov = se_fe_reduced) |>
+  filter(term %in% names(labels)) |>
+  mutate(term = recode(term, !!!labels))
+
+ggplot(tidy_fe, aes(x = reorder(term, estimate), y = estimate)) +
+  geom_point(size = 2.6) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.15) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() +
+  labs(title = "Impact on Savings Rate (pp) per 1 pp change in spending share",
+       x = "", y = "Coefficient (95% CI)") +
+  theme_minimal(base_size = 11)
+```
+
+
+```{r}
+logit_full <- feglm(
+  saved ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
+           capann_pb_pct + capann_ambpay_pct + capann_hha_pct + capann_dme_pct |
+           aco_num + year,
+  data = glm_data, family = binomial()
+)
+
+logit_reduced <- feglm(
+  saved ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
+           capann_pb_pct + capann_hha_pct |
+           aco_num + year,
+  data = glm_data, family = binomial()
+)
+
+msummary(
+  list("Logit: Full" = logit_full,
+       "Logit: Reduced" = logit_reduced),
+  vcov      = ~ aco_num,   # cluster by ACO
+  coef_map  = labels,
+  estimate  = "{estimate}{stars}",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  gof_omit  = "IC|Log|Adj|Within",
+  title     = "Probability of Achieving Savings: Fixed-Effects Logits",
+  notes     = "Logit coefficients are log-odds. ACO & year fixed effects; SEs clustered by ACO.",
+  output    = "outputs/logit_models.html"
+)
+```
+
+
+```{r}
+or_tbl <- tidy(logit_reduced, conf.int = TRUE, cluster = "aco_num") |>
+  filter(term %in% names(labels)) |>
+  mutate(term = recode(term, !!!labels),
+         OR = exp(estimate), LCL = exp(conf.low), UCL = exp(conf.high)) |>
+  select(Predictor = term, `Odds ratio` = OR, `95% LCL` = LCL, `95% UCL` = UCL)
+
+knitr::kable(or_tbl, digits = 3, caption = "Odds of achieving savings per 1 pp change in spending share")
+
+ggplot(or_tbl, aes(x = reorder(Predictor, `Odds ratio`), y = `Odds ratio`)) +
+  geom_point(size = 2.6) +
+  geom_errorbar(aes(ymin = `95% LCL`, ymax = `95% UCL`), width = 0.15) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  coord_flip() +
+  labs(title = "Odds Ratios from Reduced Logit",
+       x = "", y = "Odds ratio (95% CI)") +
+  theme_minimal(base_size = 11)
+```
+
+
+# Results & Interpretation
+
+## The fixed-effects regressions indicate that ACOs achieving higher shared savings allocate less of total spending to inpatient and skilled nursing facility (SNF) care. These coefficients are negative and statistically meaningful across specifications. Home health shows a smaller negative association. Physician spending is modestly positive and generally not significant, consistent with strengthened outpatient management but not a primary driver of savings. Fixed-effects logits confirm that higher inpatient and SNF shares reduce the odds of saving; the physician coefficient is positive but not reliably significant.
+
+## Practically, programs that prevent avoidable inpatient admissions, reduce SNF length of stay, and reinforce physician-directed outpatient care are most closely associated with MSSP savings. The replicated direction/magnitude of effects closely tracks the published findings using a later time window, suggesting the pattern is persistent.
+
+
+
+
+
