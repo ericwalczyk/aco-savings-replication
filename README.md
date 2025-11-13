@@ -6,7 +6,7 @@ Using updated **2014–2017 MSSP ACO Public Use Files**, I recreate spending-sha
 
 ---
 
-## Key Results (Short Version)
+## Key Results
 
 - **Lower inpatient and SNF spending shares** are consistently associated with higher savings.
 - **Higher physician spending share** is modestly positive but less consistent.
