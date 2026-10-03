@@ -19,6 +19,8 @@ Using updated **2014–2017 MSSP ACO Public Use Files**, I recreate spending-sha
 
 **Bottom line:** ACOs that save money shift dollars **away from inpatient/SNF** toward **physician-directed outpatient care**.
 
+The original course paper (December 2024) is in [`docs/ACO_Replication_Report.pdf`](docs/ACO_Replication_Report.pdf). It predates the current code: its savings-rate models use ACO fixed effects only with unclustered SEs, and its logit uses ACO dummy variables on all 1,569 observations, so its estimates differ from `ACO_Final.rmd`.
+
 ---
 
 ## Extension to 2024
@@ -64,6 +66,11 @@ data/
   aco_data.csv            # cleaned MSSP panel data, 2014–2017
   aco_data.rds            # cleaned MSSP panel data, 2014–2017 (R format)
   aco_panel_2014_2024.csv # harmonized panel used by the extension
+
+docs/
+  ACO_Replication_Report.pdf   # original course paper (Dec 2024)
+  Data_Dictionary-MSSP-Performance_Year_Financial_and_Quality_Results__2013-2020.pdf   # CMS data dictionary
+  Performance_Year_Financial_and_Quality_Results_PUF_Methodology.pdf                 # CMS PUF methodology
 ```
 
 ---
@@ -84,6 +91,7 @@ CMS, [Medicare Shared Savings Program Performance Year Financial and Quality Res
 
 - 2019 has two files: `2019.csv` (full-year and January–June ACOs) and `2019A.csv` (ACOs that began new agreements on July 1, 2019).
 - `2024.csv` is CMS's July 2026 revision.
+- CMS's data dictionary (covering 2013–2020) and PUF methodology note are in `docs/`.
 - The 2014–2017 files identify ACOs with a masked `ACO_Num`; 2018+ use the CMS `ACO_ID`. There is no official crosswalk, so the extension treats them as separate units and links them by ACO name as a robustness check.
 
 ---
