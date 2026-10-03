@@ -28,15 +28,18 @@ Using updated **2014–2017 MSSP ACO Public Use Files**, I recreate spending-sha
 ![Average spending composition of MSSP ACOs, 2014–2024](outputs/figures/spending_shares_2014_2024.png)
 
 - **Spending kept shifting.** From 2014 to 2024 the average inpatient share fell from 30.7% to 26.5% and SNF from 7.9% to 5.6%, while outpatient rose from 18.4% to 24.5% and physician from 31.3% to 33.1%.
+- **The shift happens within ACOs, not just through turnover.** Year fixed-effects models with ACO fixed effects (the original study's first model) show the same ACOs cut their inpatient share by 4.1 pp and SNF by 2.1 pp from 2014 to 2024, while outpatient rose 4.2 pp and physician 3.4 pp (all p < 0.001). Inpatient fell most sharply in 2020–2022 and has partly rebounded.
 - **ACOs save far more often.** 54% generated savings in 2014 vs. 89% in 2024 (median savings rate 0.3% → 4.1%).
 - **The core finding holds.** Over 2014–2024, a 1 pp higher inpatient share is associated with a 0.29 pp lower savings rate, and a 1 pp higher SNF share with a 0.30 pp lower rate (both p < 0.001). Both stay negative and significant when dropping the COVID years, splitting before/after 2019, and linking ACO IDs across eras.
 - **Physician share turns significant.** With the larger sample it is positive (+0.11 pp, p < 0.05), and strongest after 2019 (+0.16 pp, p < 0.01).
 - **Home health does not hold up.** The replication's negative home-health association is near zero and insignificant over 2014–2024.
 - **FE logit agrees.** Higher inpatient and SNF shares both significantly lower the odds of achieving savings.
 
+![Within-ACO change in spending shares since 2014](outputs/figures/spending_trends_2014_2024.png)
+
 ![Coefficient stability across samples](outputs/figures/coefficient_stability.png)
 
-All extension models use ACO and performance-period fixed effects with ACO-clustered SEs. Full tables are in `outputs/extension_main_results.html` and `outputs/extension_robustness.html`; the knitted report is `outputs/ACO_Extension.html`.
+All extension models use ACO and performance-period fixed effects with ACO-clustered SEs. Full tables are in `outputs/extension_main_results.html`, `outputs/extension_robustness.html`, and `outputs/extension_spending_trends.html`; the knitted report is `outputs/ACO_Extension.html`.
 
 ---
 
@@ -52,7 +55,8 @@ outputs/
   Medicare ACO Spending Patterns Replication Full Code Readout.pdf   # knitted full analysis
   One_Pager.pdf       # polished results summary
   ACO_Extension.html  # knitted extension report
-  extension_main_results.html, extension_robustness.html   # extension tables
+  extension_main_results.html, extension_robustness.html,
+  extension_spending_trends.html                           # extension tables
   figures/            # extension figures
 
 data/

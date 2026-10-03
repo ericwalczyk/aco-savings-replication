@@ -42,7 +42,8 @@ Differences from the replication:
   rather than to the pooled sample.
 - **Two ACO ID systems.** The 2014–2017 PUFs use a masked `ACO_Num`; 2018+ use
   the CMS `ACO_ID`. There is no official crosswalk, so the main models treat the
-  two eras as separate units. A robustness check links them by ACO name.
+  two eras as separate units. The year-trend models and a robustness check
+  link them by ACO name.
 - **2019 has two files.** `2019.csv` holds full-year and January–June ACOs;
   `2019A.csv` holds ACOs that started new agreements on July 1, 2019. Each is
   its own period.
@@ -190,6 +191,69 @@ p_shares <- ggplot(shares_by_period, aes(x = period, y = share, group = category
 
 ggsave(file.path(fig_dir, "spending_shares_2014_2024.png"), p_shares, width = 10, height = 5.5, dpi = 200, bg = "white")
 p_shares
+```
+
+### Year Fixed-Effects on Spending Shares
+
+The original study's first model: each spending share regressed on year and ACO
+fixed effects, so each year coefficient is the average within-ACO change since
+2014 (percentage points). Shares are used rather than per-capita dollars, which
+are nominal and would mostly reflect price growth over ten years. Year effects
+after 2017 are only identified through ACOs observed in both ID eras, so these
+models use the name-linked IDs.
+
+```{r}
+trend_data <- aco_data |> mutate(unit = id_linked)
+
+share_trends <- map(names(share_labels), ~ feols(
+  as.formula(paste(.x, "~ i(period, ref = '2014') | unit")),
+  data = trend_data, cluster = ~ unit, fixef.rm = "singleton"
+)) |>
+  set_names(share_labels)
+
+trend_notes <- "Outcome is each category's share of total expenditures (%). Coefficients are changes relative to 2014 (pp). ACO fixed effects (name-linked IDs); SEs clustered by ACO."
+
+modelsummary(share_trends, coef_rename = \(x) sub("^period::", "", x), stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Year Fixed-Effects on Spending Shares, 2014–2024",
+             notes = trend_notes,
+             output = file.path(out_dir, "extension_spending_trends.html"))
+
+modelsummary(share_trends, coef_rename = \(x) sub("^period::", "", x), stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Year Fixed-Effects on Spending Shares, 2014–2024",
+             notes = trend_notes,
+             output = "html")
+```
+
+```{r, fig.height = 5.5}
+trend_coefs <- imap_dfr(share_trends, function(m, category) {
+  ct <- coeftable(m)
+  ci <- confint(m)
+  tibble(category = category, period = sub("^period::", "", rownames(ct)),
+         estimate = ct[, "Estimate"], low = ci[, 1], high = ci[, 2])
+}) |>
+  bind_rows(tibble(category = names(share_trends), period = "2014", estimate = 0, low = 0, high = 0)) |>
+  mutate(period   = factor(period, levels = levels(aco_data$period)),
+         category = factor(category, levels = share_labels))
+
+p_trends <- ggplot(trend_coefs, aes(x = period, y = estimate, group = category)) +
+  annotate("rect", xmin = "2020", xmax = "2021", ymin = -Inf, ymax = Inf, alpha = 0.12) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line() +
+  geom_point(size = 1.3) +
+  facet_wrap(~ category, scales = "free_y", ncol = 4) +
+  labs(title = "Within-ACO change in spending shares since 2014 (pp)",
+       subtitle = "Year fixed effects with ACO fixed effects, 95% CIs (ACO-clustered). Shaded: COVID-19 years",
+       x = NULL, y = "Change vs. 2014 (pp)") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 7))
+
+ggsave(file.path(fig_dir, "spending_trends_2014_2024.png"), p_trends, width = 10, height = 5.5, dpi = 200, bg = "white")
+p_trends
 ```
 
 ## Savings Models, 2014–2024
