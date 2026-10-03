@@ -1,0 +1,7 @@
+# Knitted reports and tables are generated from the R Markdown in analysis/;
+# keep them out of GitHub's language statistics
+outputs/** linguist-generated=true
+
+# Count R Markdown (GitHub ignores it by default)
+*.Rmd linguist-detectable=true
+*.rmd linguist-detectable=true

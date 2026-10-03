@@ -40,13 +40,17 @@ Differences from the replication:
 - **Outliers trimmed within period.** Savings rates rise from a median of ~0.5%
   in 2014 to ~4% in 2024, so the 1.5 × IQR rule is applied within each period
   rather than to the pooled sample.
-- **Two ACO ID systems.** The 2014–2017 PUFs use a masked `ACO_Num`; 2018+ use
-  the CMS `ACO_ID`. There is no official crosswalk, so the main models treat the
-  two eras as separate units. The year-trend models and a robustness check
-  link them by ACO name.
+- **Two ACO ID systems, linked.** The 2014–2017 PUFs identify ACOs with an
+  encrypted `ACO_Num`; 2018+ use the CMS `ACO_ID`. CMS's ACO ID crosswalk
+  (`data/ssp-aco-id-crosswalk.xlsx`) maps one to the other, so each ACO keeps a
+  single ID across all years. A robustness check treats the two eras as
+  separate units instead.
 - **2019 has two files.** `2019.csv` holds full-year and January–June ACOs;
   `2019A.csv` holds ACOs that started new agreements on July 1, 2019. Each is
   its own period.
+- **2024 savings rates.** For ACOs that began an agreement period on or after
+  January 1, 2024, CMS's savings rate reflects its "guardrail" policy (see the
+  2024 data dictionary in `docs/`).
 
 ### Load and Harmonize Data
 
@@ -85,7 +89,8 @@ read_puf <- function(file) {
 
   tibble(
     file     = file,
-    id       = if ("aco_num" %in% names(df)) paste0("N:", df$aco_num) else paste0("ID:", df$aco_id),
+    aco_num  = if ("aco_num" %in% names(df)) df$aco_num else NA_character_,
+    aco_id   = if ("aco_id" %in% names(df)) df$aco_id else NA_character_,
     aco_name = df$aco_name,
     sav_rate = if (is_pct) sav else 100 * sav
   ) |>
@@ -98,34 +103,28 @@ aco_raw <- map_dfr(periods$file, read_puf) |>
 ```
 
 ```{r}
-# Link 2014–2017 masked IDs to 2018+ CMS IDs by normalized ACO name
-# (robustness check only; ambiguous names are left unlinked)
-norm_name <- function(x) str_squish(str_replace_all(toupper(str_replace_all(x, "&", " AND ")), "[^A-Z0-9 ]", " "))
-
-old_names <- aco_raw |>
-  filter(year <= 2017) |>
-  group_by(id) |> slice_max(year, n = 1, with_ties = FALSE) |> ungroup() |>
-  transmute(id, key = norm_name(aco_name))
-
-new_names <- aco_raw |>
-  filter(year >= 2018) |>
-  distinct(new_id = id, key = norm_name(aco_name)) |>
-  group_by(key) |> filter(n_distinct(new_id) == 1) |> ungroup()
-
-name_links <- old_names |>
-  inner_join(new_names, by = "key") |>
-  group_by(key) |> filter(n() == 1) |> ungroup() |>
-  group_by(new_id) |> filter(n() == 1) |> ungroup() |>
-  select(id, new_id)
+# Map 2014–2017 encrypted ACO_Num to the CMS ACO_ID with CMS's ACO ID crosswalk
+# (https://www.cms.gov/files/document/ssp-aco-id-crosswalk.xlsx)
+crosswalk <- readxl::read_excel(file.path(data_dir, "ssp-aco-id-crosswalk.xlsx"),
+                                sheet = "ACO ID Crosswalk") |>
+  clean_names() |>
+  select(aco_num, xw_aco_id = aco_id)
 
 aco_raw <- aco_raw |>
-  left_join(name_links, by = "id") |>
-  mutate(id_linked = coalesce(new_id, id)) |>
-  select(-new_id)
+  left_join(crosswalk, by = "aco_num", na_matches = "never") |>
+  mutate(id     = coalesce(aco_id, xw_aco_id),
+         # Era-specific IDs, for the robustness check that does not link eras
+         id_era = if_else(is.na(aco_num), paste0("ID:", aco_id), paste0("NUM:", aco_num))) |>
+  select(-xw_aco_id)
+
+stopifnot(!anyNA(aco_raw$id))
+
+n_old  <- n_distinct(aco_raw$aco_num, na.rm = TRUE)
+n_both <- length(intersect(aco_raw$id[aco_raw$year <= 2017], aco_raw$id[aco_raw$year >= 2018]))
 ```
 
-`r nrow(name_links)` of `r n_distinct(aco_raw$id[aco_raw$year <= 2017])`
-2014–2017 ACOs are linked to a 2018+ CMS ID by name.
+All `r n_old` 2014–2017 ACOs are in CMS's crosswalk; `r n_both` of them also
+appear in the 2018–2024 files.
 
 ```{r}
 # Trim savings-rate outliers (1.5 x IQR) within each period
@@ -198,12 +197,10 @@ p_shares
 The original study's first model: each spending share regressed on year and ACO
 fixed effects, so each year coefficient is the average within-ACO change since
 2014 (percentage points). Shares are used rather than per-capita dollars, which
-are nominal and would mostly reflect price growth over ten years. Year effects
-after 2017 are only identified through ACOs observed in both ID eras, so these
-models use the name-linked IDs.
+are nominal and would mostly reflect price growth over ten years.
 
 ```{r}
-trend_data <- aco_data |> mutate(unit = id_linked)
+trend_data <- aco_data |> mutate(unit = id)
 
 share_trends <- map(names(share_labels), ~ feols(
   as.formula(paste(.x, "~ i(period, ref = '2014') | unit")),
@@ -211,7 +208,7 @@ share_trends <- map(names(share_labels), ~ feols(
 )) |>
   set_names(share_labels)
 
-trend_notes <- "Outcome is each category's share of total expenditures (%). Coefficients are changes relative to 2014 (pp). ACO fixed effects (name-linked IDs); SEs clustered by ACO."
+trend_notes <- "Outcome is each category's share of total expenditures (%). Coefficients are changes relative to 2014 (pp). ACO fixed effects; SEs clustered by ACO."
 
 modelsummary(share_trends, coef_rename = \(x) sub("^period::", "", x), stars = TRUE,
              estimate = "{estimate}{stars}", statistic = "({std.error})",
@@ -315,17 +312,16 @@ Each column re-estimates the full specification on a different sample:
 - **2014–2024**: all periods (main estimate)
 - **Excl. 2020–21**: drops the COVID-19 years
 - **2014–2018 / 2019–2024**: before and after the 2019 *Pathways to Success* redesign
-  (2014–2018 uses name-linked IDs so 2018 records connect to the same ACOs' earlier years)
-- **Name-linked IDs**: all periods, with 2014–2017 ACOs linked to their 2018+ CMS IDs
+- **Unlinked ID eras**: all periods, treating 2014–2017 and 2018+ ACO IDs as separate units
 
 ```{r}
 samples <- list(
-  "2014–2017"        = aco_data |> filter(year <= 2017)              |> mutate(unit = id),
-  "2014–2024"        = aco_data                                      |> mutate(unit = id),
-  "Excl. 2020–21"    = aco_data |> filter(!year %in% 2020:2021)      |> mutate(unit = id),
-  "2014–2018"        = aco_data |> filter(year <= 2018)              |> mutate(unit = id_linked),
-  "2019–2024"        = aco_data |> filter(year >= 2019)              |> mutate(unit = id),
-  "Name-linked IDs"  = aco_data                                      |> mutate(unit = id_linked)
+  "2014–2017"         = aco_data |> filter(year <= 2017)         |> mutate(unit = id),
+  "2014–2024"         = aco_data                                 |> mutate(unit = id),
+  "Excl. 2020–21"     = aco_data |> filter(!year %in% 2020:2021) |> mutate(unit = id),
+  "2014–2018"         = aco_data |> filter(year <= 2018)         |> mutate(unit = id),
+  "2019–2024"         = aco_data |> filter(year >= 2019)         |> mutate(unit = id),
+  "Unlinked ID eras"  = aco_data                                 |> mutate(unit = id_era)
 )
 
 robust_fe    <- map(samples, ~ fit_fe(fml_full, .x))

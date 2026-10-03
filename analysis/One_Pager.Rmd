@@ -85,53 +85,6 @@ if (file.exists(file.path(data_dir, "aco_data.rds"))) {
 stopifnot(all(c("aco_num","year","sav_rate") %in% names(aco_data)))
 ```
 
-```{r}
-# Prefer a ready harmonized object; fall back to CSVs if needed
-if (file.exists(file.path(data_dir, "aco_data.rds"))) {
-  aco_data <- readRDS(file.path(data_dir, "aco_data.rds"))
-} else if (file.exists(file.path(data_dir, "aco_data.csv"))) {
-  aco_data <- read_csv(file.path(data_dir, "aco_data.csv"), show_col_types = FALSE) |> clean_names()
-} else {
-  # Fallback: rebuild from four yearly CSVs in data/
-  files <- list.files(data_dir, pattern = "^(2014|2015|2016|2017).*\\.csv$", full.names = TRUE)
-  stopifnot(length(files) >= 4)
-  years <- str_extract(basename(files), "^(2014|2015|2016|2017)")
-  names(files) <- years
-
-  read_one <- function(path, yr) {
-    read_csv(path, show_col_types = FALSE) |>
-      clean_names() |>
-      mutate(year = as.integer(yr)) |>
-      # normalize CapAnn variations
-      rename_with(~ str_replace_all(.x, "^cap_ann_", "capann_")) |>
-      rename_with(~ str_replace(.x, "amb_pay$", "ambpay"))
-  }
-
-  raw <- map2(files, names(files), read_one)
-
-  needed <- c("aco_num","year","sav_rate",
-              "capann_inp_all","capann_opd","capann_snf","capann_pb",
-              "capann_ambpay","capann_hha","capann_dme","capann_hsp")
-
-  safe_num <- function(x) readr::parse_number(as.character(x), na = c("", "NA", "*"))
-
-  harmonize <- function(df) {
-    miss <- setdiff(needed, names(df)); if (length(miss)) df[miss] <- NA
-    df |>
-      mutate(aco_num = as.character(aco_num)) |>
-      mutate(across(all_of(setdiff(needed, c("aco_num","year"))), safe_num)) |>
-      select(any_of(needed))
-  }
-
-  datasets2 <- map(raw, harmonize)
-  aco_data <- bind_rows(datasets2) |>
-    arrange(aco_num, year)
-}
-
-# sanity
-stopifnot(all(c("aco_num","year","sav_rate") %in% names(aco_data)))
-```
-
 
 ```{r}
 exp_cols <- c("capann_inp_all","capann_opd","capann_snf","capann_pb",
@@ -298,8 +251,5 @@ ggplot(or_tbl, aes(x = reorder(Predictor, `Odds ratio`), y = `Odds ratio`)) +
 ## The fixed-effects regressions indicate that ACOs achieving higher shared savings allocate less of total spending to inpatient and skilled nursing facility (SNF) care. A 1 pp higher inpatient share is associated with a roughly 0.5 pp lower savings rate, and a 1 pp higher SNF share with a roughly 0.3 pp lower rate, in both the full and reduced models. Home health shows a similar negative association (about 0.3 pp). Physician spending is small, positive and not significant. The fixed-effects logits are weaker: a higher inpatient share significantly reduces the odds of achieving savings, while the SNF, home health and physician coefficients are not significant.
 
 ## Practically, programs that prevent avoidable inpatient admissions and reduce SNF use are most closely associated with MSSP savings. The direction of these effects tracks the published findings over a later time window, suggesting the pattern is persistent.
-
-
-
 
 

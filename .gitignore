@@ -1,0 +1,16 @@
+# R session files
+.Rhistory
+.RData
+.Rproj.user/
+
+# macOS
+.DS_Store
+
+# Knitting by-products in analysis/ (final outputs live in outputs/)
+analysis/*.html
+analysis/*.pdf
+analysis/*.md
+analysis/*.tex
+analysis/*.log
+analysis/*_files/
+analysis/figure/
