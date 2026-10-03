@@ -92,7 +92,13 @@ read_puf <- function(file) {
     aco_num  = if ("aco_num" %in% names(df)) df$aco_num else NA_character_,
     aco_id   = if ("aco_id" %in% names(df)) df$aco_id else NA_character_,
     aco_name = df$aco_name,
-    sav_rate = if (is_pct) sav else 100 * sav
+    sav_rate = if (is_pct) sav else 100 * sav,
+    # Agreement type and start date; 2014–2015 files have a single start date
+    # (renewals began in 2016)
+    agree_type      = if ("agree_type" %in% names(df)) df$agree_type else NA_character_,
+    agreement_start = as.Date(lubridate::parse_date_time(
+      if ("current_start_date" %in% names(df)) df$current_start_date else df$start_date,
+      orders = c("mdy HM", "mdy", "ymd")))
   ) |>
     bind_cols(map_dfc(set_names(cap_vars), ~ parse_number(df[[.x]], na = c("", "NA", "*"))))
 }
@@ -114,10 +120,12 @@ aco_raw <- aco_raw |>
   left_join(crosswalk, by = "aco_num", na_matches = "never") |>
   mutate(id     = coalesce(aco_id, xw_aco_id),
          # Era-specific IDs, for the robustness check that does not link eras
-         id_era = if_else(is.na(aco_num), paste0("ID:", aco_id), paste0("NUM:", aco_num))) |>
+         id_era = if_else(is.na(aco_num), paste0("ID:", aco_id), paste0("NUM:", aco_num)),
+         # ACO x agreement period: CMS resets an ACO's benchmark when it starts a new agreement
+         spell  = paste(id, agreement_start)) |>
   select(-xw_aco_id)
 
-stopifnot(!anyNA(aco_raw$id))
+stopifnot(!anyNA(aco_raw$id), !anyNA(aco_raw$agreement_start))
 
 n_old  <- n_distinct(aco_raw$aco_num, na.rm = TRUE)
 n_both <- length(intersect(aco_raw$id[aco_raw$year <= 2017], aco_raw$id[aco_raw$year >= 2018]))
@@ -127,19 +135,22 @@ All `r n_old` 2014–2017 ACOs are in CMS's crosswalk; `r n_both` of them also
 appear in the 2018–2024 files.
 
 ```{r}
+# Spending shares as a percent of the eight categories, plus the savings indicator
+add_shares <- function(df) {
+  df |>
+    mutate(total_exp = rowSums(across(all_of(cap_vars)), na.rm = TRUE)) |>
+    mutate(across(all_of(cap_vars), ~ 100 * .x / total_exp, .names = "{.col}_pct")) |>
+    mutate(saved = as.integer(sav_rate > 0))
+}
+
 # Trim savings-rate outliers (1.5 x IQR) within each period
 aco_data <- aco_raw |>
   group_by(period) |>
   filter(between(sav_rate,
                  quantile(sav_rate, 0.25, na.rm = TRUE) - 1.5 * IQR(sav_rate, na.rm = TRUE),
                  quantile(sav_rate, 0.75, na.rm = TRUE) + 1.5 * IQR(sav_rate, na.rm = TRUE))) |>
-  ungroup()
-
-# Spending shares as a percent of the eight categories, plus the savings indicator
-aco_data <- aco_data |>
-  mutate(total_exp = rowSums(across(all_of(cap_vars)), na.rm = TRUE)) |>
-  mutate(across(all_of(cap_vars), ~ 100 * .x / total_exp, .names = "{.col}_pct")) |>
-  mutate(saved = as.integer(sav_rate > 0))
+  ungroup() |>
+  add_shares()
 
 write_csv(aco_data, file.path(data_dir, "aco_panel_2014_2024.csv"))
 
@@ -261,12 +272,13 @@ fml_full    <- c("capann_inp_all_pct", "capann_hsp_pct", "capann_snf_pct", "capa
                  "capann_ambpay_pct", "capann_hha_pct", "capann_dme_pct")
 fml_reduced <- c("capann_inp_all_pct", "capann_hsp_pct", "capann_snf_pct", "capann_pb_pct", "capann_hha_pct")
 
-# ACO (`unit`) and period fixed effects, SEs clustered by ACO
+# `unit` and period fixed effects; `unit` is the ACO unless a robustness check
+# says otherwise. SEs are always clustered by ACO (`id`).
 twfe <- function(outcome, rhs) as.formula(paste(outcome, "~", paste(rhs, collapse = " + "), "| unit + period"))
 
-# ACOs seen in only one period add no within-ACO variation, so they are dropped
-fit_fe    <- function(rhs, data) feols(twfe("sav_rate", rhs), data = data, cluster = ~ unit, fixef.rm = "singleton")
-fit_logit <- function(rhs, data) feglm(twfe("saved", rhs), data = data, family = binomial(), cluster = ~ unit)
+# Units seen in only one period add no within-unit variation, so they are dropped
+fit_fe    <- function(rhs, data) feols(twfe("sav_rate", rhs), data = data, cluster = ~ id, fixef.rm = "singleton")
+fit_logit <- function(rhs, data) feglm(twfe("saved", rhs), data = data, family = binomial(), cluster = ~ id)
 
 coef_labels <- c(
   capann_inp_all_pct = "Percent Inpatient",
@@ -313,6 +325,10 @@ Each column re-estimates the full specification on a different sample:
 - **Excl. 2020–21**: drops the COVID-19 years
 - **2014–2018 / 2019–2024**: before and after the 2019 *Pathways to Success* redesign
 - **Unlinked ID eras**: all periods, treating 2014–2017 and 2018+ ACO IDs as separate units
+- **Within agreement**: all periods, comparing each ACO only within the same
+  agreement period (ACO × agreement fixed effects). CMS resets an ACO's benchmark
+  when it starts a new agreement, which changes its savings rate without any
+  change in spending; by 2022, most ACOs were in renewed or re-entered agreements.
 
 ```{r}
 samples <- list(
@@ -321,7 +337,8 @@ samples <- list(
   "Excl. 2020–21"     = aco_data |> filter(!year %in% 2020:2021) |> mutate(unit = id),
   "2014–2018"         = aco_data |> filter(year <= 2018)         |> mutate(unit = id),
   "2019–2024"         = aco_data |> filter(year >= 2019)         |> mutate(unit = id),
-  "Unlinked ID eras"  = aco_data                                 |> mutate(unit = id_era)
+  "Unlinked ID eras"  = aco_data                                 |> mutate(unit = id_era),
+  "Within agreement"  = aco_data                                 |> mutate(unit = spell)
 )
 
 robust_fe    <- map(samples, ~ fit_fe(fml_full, .x))
@@ -376,4 +393,35 @@ p_stability <- ggplot(stability, aes(x = sample, y = estimate)) +
 
 ggsave(file.path(fig_dir, "coefficient_stability.png"), p_stability, width = 10, height = 5, dpi = 200, bg = "white")
 p_stability
+```
+
+## Model Fit
+
+The within R² of the savings-rate models is low. This table shows how it
+changes with three choices: counting the period dummies in R² (as Stata's
+`xtreg` does, and as the original study appears to), keeping savings-rate
+outliers, and comparing each ACO only within the same agreement period.
+Savings rates rose about tenfold over 2014–2024, so the period effects absorb
+much of the within-ACO change in savings.
+
+```{r}
+aco_all <- add_shares(aco_raw)
+
+fit_row <- function(data, label) {
+  m  <- fit_fe(fml_full, data)
+  md <- feols(as.formula(paste("sav_rate ~", paste(fml_full, collapse = " + "), "+ i(period) | unit")),
+              data = data, cluster = ~ id, fixef.rm = "singleton")
+  tibble(Sample = label, `ACO-years` = nobs(m),
+         `Within R² (models above)` = round(r2(m, "wr2"), 3),
+         `Within R² counting period dummies` = round(r2(md, "wr2"), 3))
+}
+
+bind_rows(
+  fit_row(aco_data |> mutate(unit = id), "Outliers dropped (main)"),
+  fit_row(aco_all |> mutate(unit = id), "All ACO-years"),
+  fit_row(aco_all |> filter(is.na(agree_type) | agree_type == "Initial") |> mutate(unit = id),
+          "All ACO-years, first agreements only"),
+  fit_row(aco_data |> mutate(unit = spell), "Outliers dropped, within agreement")
+) |>
+  knitr::kable(caption = "Within R² of the full savings-rate model, 2014–2024")
 ```

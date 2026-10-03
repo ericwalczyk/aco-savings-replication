@@ -32,11 +32,12 @@ The original course paper (December 2024) is in [`docs/ACO_Replication_Report.pd
 - **Spending kept shifting.** From 2014 to 2024 the average inpatient share fell from 30.7% to 26.5% and SNF from 7.9% to 5.6%, while outpatient rose from 18.4% to 24.5% and physician from 31.3% to 33.1%.
 - **The shift happens within ACOs, not just through turnover.** Year fixed-effects models with ACO fixed effects (the original study's first model) show the same ACOs cut their inpatient share by 4.0 pp and SNF by 2.2 pp from 2014 to 2024, while outpatient rose 4.2 pp and physician 3.5 pp (all p < 0.001). Inpatient fell most sharply in 2020–2022 and has partly rebounded.
 - **ACOs save far more often.** 54% generated savings in 2014 vs. 89% in 2024 (median savings rate 0.3% → 4.1%).
-- **The core finding holds.** Over 2014–2024, a 1 pp higher inpatient share is associated with a 0.37 pp lower savings rate (p < 0.001), and a 1 pp higher SNF share with a 0.21 pp lower rate (p < 0.01). Both stay negative and significant when dropping the COVID years, splitting before/after 2019, and treating the pre- and post-2018 ACO IDs as separate units.
+- **The core finding holds.** Over 2014–2024, a 1 pp higher inpatient share is associated with a 0.37 pp lower savings rate (p < 0.001), and a 1 pp higher SNF share with a 0.21 pp lower rate (p < 0.01). Both stay negative and significant when dropping the COVID years, splitting before/after 2019, treating the pre- and post-2018 ACO IDs as separate units, and comparing each ACO only within the same agreement period (CMS resets an ACO's benchmark when it starts a new agreement).
 - **Hospice share also turns negative** (−0.34 pp, p < 0.001), but it is not significant before 2019.
-- **Physician share is positive but only marginal overall** (+0.10 pp, p < 0.10); it is significant after 2019 (+0.16 pp, p < 0.01).
+- **Physician share is positive but only marginal overall** (+0.10 pp, p < 0.10); it is significant after 2019 (+0.16 pp, p < 0.01) and when comparing within agreement periods (+0.13 pp, p < 0.05).
 - **Home health does not hold up.** The replication's negative home-health association is near zero and insignificant over 2014–2024.
 - **FE logit agrees.** Higher inpatient and SNF shares both significantly lower the odds of achieving savings, and a higher physician share raises them (p < 0.05).
+- **Model fit.** The extension's within R² is 0.057. Counted the way the original study appears to (Stata's within R², which includes the period dummies), it is 0.19, close to the original's 0.216: savings rates rose about tenfold, and the period effects capture that shared trend. Keeping outliers raises the within R² to 0.082, and comparing within agreement periods raises it to 0.075 (see the Model Fit table in `outputs/ACO_Extension.html`).
 
 ![Within-ACO change in spending shares since 2014](outputs/figures/spending_trends_2014_2024.png)
 
