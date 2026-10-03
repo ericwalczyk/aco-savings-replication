@@ -15,7 +15,7 @@ Using updated **2014–2017 MSSP ACO Public Use Files**, I recreate spending-sha
   - ACO & year fixed effects  
   - ACO‐clustered SEs  
   - Reduced models (multicollinearity)  
-  - Fixed-effects logistic regression
+  - Fixed-effects logistic regression (inpatient share only; the SNF logit coefficient is not significant for 2014–2017)
 
 **Bottom line:** ACOs that save money shift dollars **away from inpatient/SNF** toward **physician-directed outpatient care**.
 
