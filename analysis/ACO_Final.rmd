@@ -17,11 +17,16 @@ geometry: margin=1in
 knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 7, fig.height = 4.2, dpi = 220)
 suppressPackageStartupMessages({
   library(dplyr); library(ggplot2); library(broom); library(modelsummary)
-  library(lmtest); library(sandwich)
+  library(lmtest); library(sandwich); library(plm)
 })
 
 # Set global options
 knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+# Paths are relative to this file (analysis/), so knitting works from a fresh clone
+data_dir <- file.path("..", "data")
+out_dir  <- file.path("..", "outputs")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 ```
 
 ### Load and Clean Data
@@ -33,7 +38,7 @@ library(purrr)
 library(stringr)
 library(janitor)
 
-files <- list.files(pattern = "^(2014|2015|2016|2017).*\\.csv$", full.names = TRUE)
+files <- list.files(data_dir, pattern = "^(2014|2015|2016|2017).*\\.csv$", full.names = TRUE)
 years <- str_extract(basename(files), "^(2014|2015|2016|2017)")
 
 # 1) read + clean + add year
@@ -78,14 +83,14 @@ aco_data <- bind_rows(datasets2, .id = "src_year") |>
 ```
 
 ```{r, eval=FALSE}
-write.csv(aco_data, "aco_data.csv")
-saveRDS(aco_data, "aco_data.rds")
+write.csv(aco_data, file.path(data_dir, "aco_data.csv"))
+saveRDS(aco_data, file.path(data_dir, "aco_data.rds"))
 ```
 
 ```{r, eval=FALSE}
 # after aco_data is finalized
-if (!dir.exists("data")) dir.create("data", recursive = TRUE)
-saveRDS(aco_data, "data/aco_data.rds")
+if (!dir.exists(data_dir)) dir.create(data_dir, recursive = TRUE)
+saveRDS(aco_data, file.path(data_dir, "aco_data.rds"))
 ```
 
 ### Model Set Up
@@ -532,7 +537,7 @@ msummary(
   gof_omit  = "IC|Log|Adj|Within|RMSE",
   title     = "Spending Composition and ACO Savings: Fixed Effects and Logit Models",
   notes     = "FE models report coefficients on savings rate with ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
-  output    = "outputs/combined_results.html"
+  output    = file.path(out_dir, "combined_results.html")
 )
 
 # Optional DOCX export for applications
@@ -546,6 +551,6 @@ msummary(
   gof_omit  = "IC|Log|Adj|Within|RMSE",
   title     = "Spending Composition and ACO Savings: Fixed Effects and Logit Models",
   notes     = "FE models report coefficients on savings rate with ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
-  output    = "outputs/combined_results.docx"
+  output    = file.path(out_dir, "combined_results.docx")
 )
 ```

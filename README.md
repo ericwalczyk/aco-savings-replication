@@ -1,6 +1,6 @@
 # Medicare ACO Spending Patterns – Replication & Extension (2014–2017)
 
-This project replicates and extends findings from **Muhlestein et al. (2018)**, *Medicare Accountable Care Spending Patterns: Shifting Expenditures Associated With Savings*, AJAC 6(1):11–19.  [oai_citation:0‡Medicare Accountable Care Spending Patterns.pdf](sediment://file_000000005c3471f598f95c85d9bdb816)
+This project replicates and extends findings from **Muhlestein et al. (2018)**, *Medicare Accountable Care Spending Patterns: Shifting Expenditures Associated With Savings*, AJAC 6(1):11–19.
 
 Using updated **2014–2017 MSSP ACO Public Use Files**, I recreate spending-share metrics and estimate fixed-effects models to test which expenditure shifts are associated with shared savings.
 
@@ -22,22 +22,28 @@ Using updated **2014–2017 MSSP ACO Public Use Files**, I recreate spending-sha
 ---
 
 ## Repository Structure
+
+```
 analysis/
-  ACO_Final.Rmd     # full reproducible analysis
+  ACO_Final.rmd     # full reproducible analysis
   One_Pager.Rmd     # code for 1-page summary
 
-output/
+outputs/
+  Medicare ACO Spending Patterns Replication Full Code Readout.pdf   # knitted full analysis
   One_Pager.pdf     # polished results summary
 
 data/
-  aco_data.rds      # cleaned MSSP panel data
+  2014.csv – 2017.csv   # raw MSSP ACO Public Use Files
+  aco_data.csv      # cleaned MSSP panel data
+  aco_data.rds      # cleaned MSSP panel data (R format)
+```
 
-  ---
+---
 
 ## Reproduce the Analysis
 
-1. Open `analysis/ACO_Final.Rmd` in RStudio.  
-2. Install required packages (tidyverse, fixest, broom, flextable, etc.).  
+1. Open `analysis/ACO_Final.rmd` in RStudio.  
+2. Install required packages: tidyverse, janitor, plm, lmtest, sandwich, fixest, broom, modelsummary, flextable.  
 3. Knit the file to regenerate all models and figures.  
 4. Knit `One_Pager.Rmd` to recreate the summary PDF.
 
@@ -47,7 +53,7 @@ data/
 
 Muhlestein DB, Morrison SQ, Saunders RS, Bleser WK, McClellan MB, Winfield LD.  
 *Medicare Accountable Care Spending Patterns: Shifting Expenditures Associated With Savings.*  
-**American Journal of Accountable Care.** 2018;6(1):11–19.  [oai_citation:1‡Medicare Accountable Care Spending Patterns.pdf](sediment://file_000000005c3471f598f95c85d9bdb816)
+**American Journal of Accountable Care.** 2018;6(1):11–19.
 
 ---
 
