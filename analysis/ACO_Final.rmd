@@ -56,7 +56,8 @@ needed <- c("aco_num","year","sav_rate",
             "capann_inp_all","capann_opd","capann_snf",
             "capann_pb","capann_ambpay","capann_hha",
             "capann_dme","capann_hsp",
-            "qual_score")  # optional
+            "qual_score",   # optional
+            "agree_type")   # Initial/Renewal (2016+), used in the sensitivity check
 
 # 4) make sure each frame has all needed cols and types match
 harmonize_one <- function(df) {
@@ -102,6 +103,9 @@ expenditure_columns <- c(
   "capann_pb", "capann_ambpay", "capann_hha",
   "capann_dme", "capann_hsp"
 )
+
+### Keep an untrimmed copy for the sensitivity check at the end
+aco_data_all <- aco_data
 
 ### Remove outliers in savings rate
 lower_bound <- quantile(aco_data$sav_rate, 0.25, na.rm = TRUE) - 1.5 * IQR(aco_data$sav_rate, na.rm = TRUE)
@@ -557,4 +561,57 @@ msummary(
   notes     = "FE models report coefficients on savings rate with ACO and year FEs and ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
   output    = file.path(out_dir, "combined_results.docx")
 )
+```
+
+## Sensitivity: Outliers, Benchmark Resets, and R²
+
+The original study used every ACO-year in the 2013–2016 PUFs (220 + 333 + 392 +
+432 = 1,377 observations) and appears to report Stata's within R², which counts
+the year dummies. This table re-estimates the full savings-rate model (ACO and
+year fixed effects, ACO-clustered SEs) on different samples and reports both R²
+definitions.
+
+```{r}
+library(fixest)
+
+# Same spending shares and savings-rate scale as the main models
+prep_shares <- function(df) {
+  df %>%
+    mutate(total_expenditures = rowSums(across(all_of(expenditure_columns)),
+                                        na.rm = TRUE)) %>%
+    mutate(across(all_of(expenditure_columns),
+                  ~ round(.x / total_expenditures * 100, 2),
+                  .names = "{.col}_pct"),
+           sav_rate = sav_rate * 100)
+}
+
+sens_samples <- list(
+  "2014–2017, outliers dropped (main)" =
+    aco_data_all %>% filter(sav_rate >= lower_bound, sav_rate <= upper_bound),
+  "2014–2017, all ACO-years" = aco_data_all,
+  "2014–2017, all ACO-years, excl. renewed agreements" =
+    aco_data_all %>% filter(is.na(agree_type) | agree_type != "Renewal"),
+  "2014–2016, all ACO-years" = aco_data_all %>% filter(year <= 2016)
+)
+
+sens_rhs <- paste(c("capann_inp_all_pct", "capann_hsp_pct", "capann_snf_pct",
+                    "capann_pb_pct", "capann_ambpay_pct", "capann_hha_pct",
+                    "capann_dme_pct"), collapse = " + ")
+
+sens_row <- function(df) {
+  df <- prep_shares(df)
+  twoway  <- feols(as.formula(paste("sav_rate ~", sens_rhs, "| aco_num + year")),
+                   data = df, cluster = ~ aco_num)
+  dummies <- feols(as.formula(paste("sav_rate ~", sens_rhs, "+ i(year) | aco_num")),
+                   data = df)
+  fmt <- function(v) sprintf("%.3f (%.3f)", coef(twoway)[v], se(twoway)[v])
+  tibble(`ACO-years`                       = nobs(twoway),
+         `Within R² (main models)`         = round(r2(twoway, "wr2"), 3),
+         `Within R² counting year dummies` = round(r2(dummies, "wr2"), 3),
+         `Percent Inpatient`               = fmt("capann_inp_all_pct"),
+         `Percent SNF`                     = fmt("capann_snf_pct"))
+}
+
+imap_dfr(sens_samples, ~ sens_row(.x) %>% mutate(Sample = .y, .before = 1)) %>%
+  knitr::kable(caption = "Full savings-rate model by sample (ACO-clustered SEs)")
 ```

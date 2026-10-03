@@ -64,8 +64,11 @@ Full savings-rate model (Model 1 in both), ACO and year fixed effects:
 \* p < 0.05, \*\* p < 0.01. The original reports robust SEs with \* p < .1, \*\* p < .05, \*\*\* p < .01; its stars are converted here.
 
 - **Years differ.** The replication uses 2014–2017 rather than 2013–2016, since the 2013 file needs substantial cleaning.
-- **Outliers.** The replication drops savings-rate outliers (1.5 × IQR); the original does not describe outlier handling.
-- **Model fit.** The original does not say which R² it reports; the replication's is the within-ACO R².
+- **Outliers.** The original used every ACO-year: its 1,377 observations are all of the ACOs in the 2013–2016 files (220 + 333 + 392 + 432). The replication drops savings-rate outliers (1.5 × IQR). With all ACO-years, the SNF estimate is −0.60 instead of −0.29, closer to the original's −0.82.
+- **Model fit.** Three things lower the replication's R²; the sensitivity table at the end of `ACO_Final.rmd` shows each:
+  - Dropping outliers: R² is 0.113 with all 2014–2017 ACO-years and 0.074 without the outliers.
+  - Including 2017: CMS resets an ACO's benchmark when it renews its agreement, which changes its savings rate without any change in spending mix, and 198 of 472 ACOs were in renewed agreements in 2017. Excluding renewed agreements raises R² to 0.175; using all ACO-years for 2014–2016 gives 0.221, close to the original's 0.216.
+  - The R² definition: the replication's within R² removes the year effects, while the original appears to report Stata's within R², which counts the year dummies (about +0.02 here).
 - **Smaller logit samples.** A fixed-effects logit drops ACOs whose savings status never changes, which is why both logit samples are smaller than the savings-rate samples (45% of ACO-years in the original, 49% here).
 
 ---
