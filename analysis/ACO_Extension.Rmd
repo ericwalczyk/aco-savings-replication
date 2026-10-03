@@ -1,0 +1,319 @@
+---
+title: "Medicare ACO Spending Patterns: Extension to 2014–2024"
+author: "Eric Walczyk"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 5, dpi = 220)
+suppressPackageStartupMessages({
+  library(dplyr); library(readr); library(purrr); library(stringr); library(tidyr)
+  library(janitor); library(ggplot2); library(fixest); library(modelsummary)
+})
+setFixest_notes(FALSE)
+
+# Paths are relative to this file (analysis/), so knitting works from a fresh clone
+data_dir <- file.path("..", "data")
+out_dir  <- file.path("..", "outputs")
+fig_dir  <- file.path(out_dir, "figures")
+if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+```
+
+## Overview
+
+The replication (`ACO_Final.rmd`) covers 2014–2017. This file extends the same
+models through performance year 2024 using the MSSP Performance Year Financial
+and Quality Results PUFs, and tests whether the original findings survive the
+2019 *Pathways to Success* redesign and the COVID-19 years.
+
+Differences from the replication:
+
+- **Two-way fixed effects.** All models include ACO *and* performance-period
+  fixed effects (`fixest`), with standard errors clustered by ACO. ACOs observed
+  in only one period are dropped, since they add no within-ACO variation.
+- **Outliers trimmed within period.** Savings rates rise from a median of ~0.5%
+  in 2014 to ~4% in 2024, so the 1.5 × IQR rule is applied within each period
+  rather than to the pooled sample.
+- **Two ACO ID systems.** The 2014–2017 PUFs use a masked `ACO_Num`; 2018+ use
+  the CMS `ACO_ID`. There is no official crosswalk, so the main models treat the
+  two eras as separate units. A robustness check links them by ACO name.
+- **2019 has two files.** `2019.csv` holds full-year and January–June ACOs;
+  `2019A.csv` holds ACOs that started new agreements on July 1, 2019. Each is
+  its own period.
+
+### Load and Harmonize Data
+
+```{r}
+cap_vars <- c("capann_inp_all", "capann_opd", "capann_snf", "capann_pb",
+              "capann_ambpay", "capann_hha", "capann_dme", "capann_hsp")
+
+periods <- tribble(
+  ~file,   ~period,         ~year,
+  "2014",  "2014",          2014L,
+  "2015",  "2015",          2015L,
+  "2016",  "2016",          2016L,
+  "2017",  "2017",          2017L,
+  "2018",  "2018",          2018L,
+  "2019",  "2019",          2019L,
+  "2019A", "2019 Jul–Dec",  2019L,
+  "2020",  "2020",          2020L,
+  "2021",  "2021",          2021L,
+  "2022",  "2022",          2022L,
+  "2023",  "2023",          2023L,
+  "2024",  "2024",          2024L
+)
+
+read_puf <- function(file) {
+  df <- read_csv(file.path(data_dir, paste0(file, ".csv")),
+                 col_types = cols(.default = "c"), show_col_types = FALSE) |>
+    clean_names() |>
+    rename_with(~ str_replace_all(.x, "^cap_ann_", "capann_")) |>
+    rename_with(~ str_replace_all(.x, "amb_pay$", "ambpay"))
+
+  # Sav_rate is a fraction (2014–2020), "5.50%" text (2019A, 2021–2023),
+  # or a plain percent (2024): detect per file and convert to percentage points
+  sav_raw <- df$sav_rate
+  sav     <- parse_number(sav_raw, na = c("", "NA", "*"))
+  is_pct  <- any(grepl("%", sav_raw)) || max(abs(sav), na.rm = TRUE) > 1
+
+  tibble(
+    file     = file,
+    id       = if ("aco_num" %in% names(df)) paste0("N:", df$aco_num) else paste0("ID:", df$aco_id),
+    aco_name = df$aco_name,
+    sav_rate = if (is_pct) sav else 100 * sav
+  ) |>
+    bind_cols(map_dfc(set_names(cap_vars), ~ parse_number(df[[.x]], na = c("", "NA", "*"))))
+}
+
+aco_raw <- map_dfr(periods$file, read_puf) |>
+  left_join(periods, by = "file") |>
+  mutate(period = factor(period, levels = periods$period))
+```
+
+```{r}
+# Link 2014–2017 masked IDs to 2018+ CMS IDs by normalized ACO name
+# (robustness check only; ambiguous names are left unlinked)
+norm_name <- function(x) str_squish(str_replace_all(toupper(str_replace_all(x, "&", " AND ")), "[^A-Z0-9 ]", " "))
+
+old_names <- aco_raw |>
+  filter(year <= 2017) |>
+  group_by(id) |> slice_max(year, n = 1, with_ties = FALSE) |> ungroup() |>
+  transmute(id, key = norm_name(aco_name))
+
+new_names <- aco_raw |>
+  filter(year >= 2018) |>
+  distinct(new_id = id, key = norm_name(aco_name)) |>
+  group_by(key) |> filter(n_distinct(new_id) == 1) |> ungroup()
+
+name_links <- old_names |>
+  inner_join(new_names, by = "key") |>
+  group_by(key) |> filter(n() == 1) |> ungroup() |>
+  group_by(new_id) |> filter(n() == 1) |> ungroup() |>
+  select(id, new_id)
+
+aco_raw <- aco_raw |>
+  left_join(name_links, by = "id") |>
+  mutate(id_linked = coalesce(new_id, id)) |>
+  select(-new_id)
+```
+
+`r nrow(name_links)` of `r n_distinct(aco_raw$id[aco_raw$year <= 2017])`
+2014–2017 ACOs are linked to a 2018+ CMS ID by name.
+
+```{r}
+# Trim savings-rate outliers (1.5 x IQR) within each period
+aco_data <- aco_raw |>
+  group_by(period) |>
+  filter(between(sav_rate,
+                 quantile(sav_rate, 0.25, na.rm = TRUE) - 1.5 * IQR(sav_rate, na.rm = TRUE),
+                 quantile(sav_rate, 0.75, na.rm = TRUE) + 1.5 * IQR(sav_rate, na.rm = TRUE))) |>
+  ungroup()
+
+# Spending shares as a percent of the eight categories, plus the savings indicator
+aco_data <- aco_data |>
+  mutate(total_exp = rowSums(across(all_of(cap_vars)), na.rm = TRUE)) |>
+  mutate(across(all_of(cap_vars), ~ 100 * .x / total_exp, .names = "{.col}_pct")) |>
+  mutate(saved = as.integer(sav_rate > 0))
+
+write_csv(aco_data, file.path(data_dir, "aco_panel_2014_2024.csv"))
+
+aco_raw |>
+  count(period, name = "ACOs (raw)") |>
+  left_join(
+    aco_data |>
+      group_by(period) |>
+      summarise(`ACOs (after trimming)` = n(),
+                `Median savings rate (%)` = round(median(sav_rate), 2),
+                `Share that saved (%)`    = round(100 * mean(saved), 1)),
+    by = "period"
+  ) |>
+  rename(Period = period) |>
+  knitr::kable(caption = "MSSP ACOs by performance period")
+```
+
+## Spending Composition, 2014–2024
+
+```{r}
+share_labels <- c(
+  capann_inp_all_pct = "Inpatient",
+  capann_opd_pct     = "Outpatient (OPD)",
+  capann_snf_pct     = "SNF",
+  capann_pb_pct      = "Physician",
+  capann_ambpay_pct  = "Ambulance",
+  capann_hha_pct     = "Home Health",
+  capann_dme_pct     = "DME",
+  capann_hsp_pct     = "Hospice"
+)
+
+shares_by_period <- aco_data |>
+  group_by(period) |>
+  summarise(across(all_of(names(share_labels)), ~ mean(.x, na.rm = TRUE))) |>
+  pivot_longer(-period, names_to = "category", values_to = "share") |>
+  mutate(category = factor(share_labels[category], levels = share_labels))
+
+p_shares <- ggplot(shares_by_period, aes(x = period, y = share, group = category)) +
+  annotate("rect", xmin = "2020", xmax = "2021", ymin = -Inf, ymax = Inf, alpha = 0.12) +
+  geom_line() +
+  geom_point(size = 1.3) +
+  facet_wrap(~ category, scales = "free_y", ncol = 4) +
+  labs(title = "Average spending composition of MSSP ACOs, 2014–2024",
+       subtitle = "Shaded: COVID-19 years (2020–2021)",
+       x = NULL, y = "Share of total expenditures (%)") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 7))
+
+ggsave(file.path(fig_dir, "spending_shares_2014_2024.png"), p_shares, width = 10, height = 5.5, dpi = 200, bg = "white")
+p_shares
+```
+
+## Savings Models, 2014–2024
+
+```{r}
+# Same specifications as the replication; OPD share is the omitted category
+fml_full    <- c("capann_inp_all_pct", "capann_hsp_pct", "capann_snf_pct", "capann_pb_pct",
+                 "capann_ambpay_pct", "capann_hha_pct", "capann_dme_pct")
+fml_reduced <- c("capann_inp_all_pct", "capann_hsp_pct", "capann_snf_pct", "capann_pb_pct", "capann_hha_pct")
+
+# ACO (`unit`) and period fixed effects, SEs clustered by ACO
+twfe <- function(outcome, rhs) as.formula(paste(outcome, "~", paste(rhs, collapse = " + "), "| unit + period"))
+
+# ACOs seen in only one period add no within-ACO variation, so they are dropped
+fit_fe    <- function(rhs, data) feols(twfe("sav_rate", rhs), data = data, cluster = ~ unit, fixef.rm = "singleton")
+fit_logit <- function(rhs, data) feglm(twfe("saved", rhs), data = data, family = binomial(), cluster = ~ unit)
+
+coef_labels <- c(
+  capann_inp_all_pct = "Percent Inpatient",
+  capann_hsp_pct     = "Percent Hospice",
+  capann_snf_pct     = "Percent SNF",
+  capann_pb_pct      = "Percent Physician",
+  capann_ambpay_pct  = "Percent Ambulance",
+  capann_hha_pct     = "Percent Home Health",
+  capann_dme_pct     = "Percent DME"
+)
+
+full_sample <- aco_data |> mutate(unit = id)
+
+main_models <- list(
+  "FE: Savings Rate (Full)"    = fit_fe(fml_full, full_sample),
+  "FE: Savings Rate (Reduced)" = fit_fe(fml_reduced, full_sample),
+  "Logit: Full"                = fit_logit(fml_full, full_sample),
+  "Logit: Reduced"             = fit_logit(fml_reduced, full_sample)
+)
+
+main_notes <- "ACO and performance-period fixed effects; SEs clustered by ACO. FE outcome is the savings rate (percentage points). Logit outcome is 1 if the ACO generated savings; coefficients are log-odds. Outpatient (OPD) share is the omitted category. The FE logit drops ACOs whose outcome never varies."
+
+modelsummary(main_models, coef_map = coef_labels, stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Spending Composition and ACO Savings, 2014–2024",
+             notes = main_notes,
+             output = file.path(out_dir, "extension_main_results.html"))
+
+modelsummary(main_models, coef_map = coef_labels, stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Spending Composition and ACO Savings, 2014–2024",
+             notes = main_notes,
+             output = "html")
+```
+
+## Robustness
+
+Each column re-estimates the full specification on a different sample:
+
+- **2014–2017**: the replication window, now with two-way fixed effects
+- **2014–2024**: all periods (main estimate)
+- **Excl. 2020–21**: drops the COVID-19 years
+- **2014–2018 / 2019–2024**: before and after the 2019 *Pathways to Success* redesign
+  (2014–2018 uses name-linked IDs so 2018 records connect to the same ACOs' earlier years)
+- **Name-linked IDs**: all periods, with 2014–2017 ACOs linked to their 2018+ CMS IDs
+
+```{r}
+samples <- list(
+  "2014–2017"        = aco_data |> filter(year <= 2017)              |> mutate(unit = id),
+  "2014–2024"        = aco_data                                      |> mutate(unit = id),
+  "Excl. 2020–21"    = aco_data |> filter(!year %in% 2020:2021)      |> mutate(unit = id),
+  "2014–2018"        = aco_data |> filter(year <= 2018)              |> mutate(unit = id_linked),
+  "2019–2024"        = aco_data |> filter(year >= 2019)              |> mutate(unit = id),
+  "Name-linked IDs"  = aco_data                                      |> mutate(unit = id_linked)
+)
+
+robust_fe    <- map(samples, ~ fit_fe(fml_full, .x))
+robust_logit <- map(samples, ~ fit_logit(fml_full, .x))
+
+modelsummary(robust_fe, coef_map = coef_labels, stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Robustness: Fixed-Effects Regression on Savings Rate (Full Specification)",
+             notes = "ACO and performance-period fixed effects; SEs clustered by ACO.",
+             output = "html")
+
+modelsummary(robust_logit, coef_map = coef_labels, stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Robustness: Fixed-Effects Logit on Achieving Savings (Full Specification)",
+             notes = "ACO and performance-period fixed effects; SEs clustered by ACO. Coefficients are log-odds.",
+             output = "html")
+
+modelsummary(c(setNames(robust_fe, paste("FE:", names(robust_fe))),
+               setNames(robust_logit, paste("Logit:", names(robust_logit)))),
+             coef_map = coef_labels, stars = TRUE,
+             estimate = "{estimate}{stars}", statistic = "({std.error})",
+             gof_omit = "IC|Log|Adj|RMSE|Std.Errors",
+             title = "Robustness: FE Savings-Rate and FE Logit Models Across Samples",
+             notes = "ACO and performance-period fixed effects; SEs clustered by ACO.",
+             output = file.path(out_dir, "extension_robustness.html"))
+```
+
+```{r, fig.height = 5.5}
+key_terms <- c("capann_inp_all_pct", "capann_snf_pct", "capann_pb_pct", "capann_hha_pct")
+
+stability <- imap_dfr(robust_fe, function(m, sample) {
+  ct <- coeftable(m)
+  ci <- confint(m)
+  tibble(sample = sample, term = rownames(ct), estimate = ct[, "Estimate"],
+         low = ci[, 1], high = ci[, 2])
+}) |>
+  filter(term %in% key_terms) |>
+  mutate(term   = factor(coef_labels[term], levels = coef_labels[key_terms]),
+         sample = factor(sample, levels = names(samples)))
+
+p_stability <- ggplot(stability, aes(x = sample, y = estimate)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_pointrange(aes(ymin = low, ymax = high), size = 0.3) +
+  facet_wrap(~ term, ncol = 4) +
+  labs(title = "Effect of a 1 pp higher spending share on the savings rate (pp)",
+       subtitle = "Two-way FE estimates with 95% CIs (ACO-clustered), by sample",
+       x = NULL, y = "Coefficient") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(file.path(fig_dir, "coefficient_stability.png"), p_stability, width = 10, height = 5, dpi = 200, bg = "white")
+p_stability
+```
