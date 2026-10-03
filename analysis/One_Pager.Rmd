@@ -182,12 +182,12 @@ ggplot(desc, aes(x = year, y = pct, group = var)) +
 fe_full <- plm(
   sav_rate ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
              capann_pb_pct + capann_ambpay_pct + capann_hha_pct + capann_dme_pct,
-  data = fe_data, model = "within"
+  data = fe_data, model = "within", effect = "twoways"
 )
 fe_reduced <- plm(
   sav_rate ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
              capann_pb_pct + capann_hha_pct,
-  data = fe_data, model = "within"
+  data = fe_data, model = "within", effect = "twoways"
 )
 
 se_fe_full    <- vcovHC(fe_full,    type = "HC1", cluster = "group")

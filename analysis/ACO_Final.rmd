@@ -1,5 +1,5 @@
 ---
-title: "Medicare ACO Spending Patterns Replicationr"
+title: "Medicare ACO Spending Patterns Replication"
 author: "Eric Walczyk"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
@@ -221,11 +221,13 @@ ggplot(tidy_unadj, aes(x = term, y = estimate, color = model)) +
 ```{r}
 ### Savings Rate Model 1 — Full Fixed Effects Regression on Savings Rate (polished)
 
+# ACO and year fixed effects
 savings_rate_model1 <- plm(
   sav_rate ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
              capann_pb_pct + capann_ambpay_pct + capann_hha_pct + capann_dme_pct,
-  data  = fe_data,
-  model = "within"
+  data   = fe_data,
+  model  = "within",
+  effect = "twoways"
 )
 
 # Clustered standard errors at the ACO level (match Model 2)
@@ -261,11 +263,13 @@ modelsummary(
 ```{r}
 ### Savings Rate Model 2 — Reduced Fixed Effects Regression on Savings Rate
 
+# ACO and year fixed effects
 savings_rate_model2 <- plm(
   sav_rate ~ capann_inp_all_pct + capann_hsp_pct + capann_snf_pct +
               capann_pb_pct + capann_hha_pct,
   data = fe_data,
-  model = "within"
+  model = "within",
+  effect = "twoways"
 )
 
 # Clustered standard errors by ACO
@@ -536,7 +540,7 @@ msummary(
   stars     = TRUE,
   gof_omit  = "IC|Log|Adj|Within|RMSE",
   title     = "Spending Composition and ACO Savings: Fixed Effects and Logit Models",
-  notes     = "FE models report coefficients on savings rate with ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
+  notes     = "FE models report coefficients on savings rate with ACO and year FEs and ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
   output    = file.path(out_dir, "combined_results.html")
 )
 
@@ -550,7 +554,7 @@ msummary(
   stars     = TRUE,
   gof_omit  = "IC|Log|Adj|Within|RMSE",
   title     = "Spending Composition and ACO Savings: Fixed Effects and Logit Models",
-  notes     = "FE models report coefficients on savings rate with ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
+  notes     = "FE models report coefficients on savings rate with ACO and year FEs and ACO-clustered SEs. Logit models are fixed-effects logits with ACO and year FEs; SEs clustered by ACO. Coefficients for logits are log-odds.",
   output    = file.path(out_dir, "combined_results.docx")
 )
 ```
